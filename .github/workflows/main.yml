@@ -1,96 +1,44 @@
-name: Gartic RDP (Win10 + Max Virtual RAM)
+name: saif
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */5 * * *'
 
 jobs:
-  gartic-bot:
+  windows:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 1000
 
     steps:
-      - name: 1. Maximize Virtual Memory (The Trick)
+      - name: Maximize Virtual Memory
         run: |
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' -Name "PagingFiles" -Value "C:\pagefile.sys 20000 20000"
-          Write-Host "Virtual Memory Increased to 20GB!"
+          Write-Host "Virtual Memory set to 20GB"
 
-      - name: 2. Configure RDP Network
+      - name: Enable RDP
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           netsh advfirewall firewall add rule name="Allow-RDP" dir=in action=allow protocol=TCP localport=3389
 
-      - name: 3. Configure Extensions
+      - name: Create User
         run: |
-          $firefoxDir = "C:\Program Files\Mozilla Firefox"
-          $distDir = "$firefoxDir\distribution"
-          if (!(Test-Path $distDir)) { New-Item -ItemType Directory -Force -Path $distDir }
+          secedit /export /cfg C:\secpol.cfg
+          (Get-Content C:\secpol.cfg) -replace "PasswordComplexity = 1","PasswordComplexity = 0" | Out-File C:\secpol.cfg
+          secedit /configure /db C:\windows\security\local.sdb /cfg C:\secpol.cfg /areas SECURITYPOLICY
+          Remove-Item C:\secpol.cfg -Force
+          $pass = ConvertTo-SecureString "12345678" -AsPlainText -Force
+          New-LocalUser -Name "saif1234" -Password $pass -AccountNeverExpires -PasswordNeverExpires -ErrorAction SilentlyContinue
+          "Administrators","Remote Desktop Users" | ForEach-Object { Add-LocalGroupMember -Group $_ -Member "saif1234" -ErrorAction SilentlyContinue }
 
-          $extensions = @(
-              "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi",
-              "https://addons.mozilla.org/firefox/downloads/latest/auto-refresh-page/latest.xpi",
-              "https://addons.mozilla.org/firefox/downloads/latest/multi-account-containers/latest.xpi",
-              "https://addons.mozilla.org/firefox/downloads/latest/tampermonkey/latest.xpi"
-          )
-
-          $policies = @{
-              policies = @{
-                  Extensions = @{ Install = $extensions }
-                  DisableAppUpdate = $true
-                  DontCheckDefaultBrowser = $true
-              }
-          }
-          $policies | ConvertTo-Json -Depth 4 | Out-File "$distDir\policies.json" -Encoding UTF8
-
-      - name: 4. Create RDP User
+      - name: Start Tailscale
         run: |
-          $password = "Start@123456"
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          New-LocalUser -Name "YOU" -Password $securePass -AccountNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "YOU"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "YOU"
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "$env:TEMP\ts.exe"
+          Start-Process "$env:TEMP\ts.exe" -ArgumentList "/quiet","/norestart" -Wait
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=windows-bot
 
-      - name: 5. Start Tailscale
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
-          Invoke-WebRequest -Uri $tsUrl -OutFile "$env:TEMP\tailscale.exe"
-          Start-Process "$env:TEMP\tailscale.exe" -ArgumentList "/quiet", "/norestart" -Wait
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gartic-max-ram
-
-      - name: 6. Launch Firefox with Userscript + Tabs
+      - name: Show IP & Keep Alive
         run: |
           $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          echo "::notice title=RDP CONNECT INFO::IP: $ip | User: YOU | Pass: Start@123456"
-
-          $firefox = "C:\Program Files\Mozilla Firefox\firefox.exe"
-          $scriptUrl = "https://github.com/ystgebkxigebj-sketch/1/raw/refs/heads/main/.github/gartic-token.user.js"
-
-          # First launch Firefox to initialize profile + extensions
-          Write-Host "Launching Firefox to initialize..."
-          $proc = Start-Process $firefox -ArgumentList "-headless" -PassThru
-          Start-Sleep -Seconds 20
-          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 5
-          Write-Host "Firefox initialized."
-
-          # Now launch Firefox with the userscript URL + gartic tabs
-          # This runs in the SYSTEM session, visible when you RDP in
-          Write-Host "Launching Firefox with tabs..."
-          Start-Process $firefox -ArgumentList "$scriptUrl"
-          Start-Sleep -Seconds 3
-          Start-Process $firefox -ArgumentList "-new-tab", "https://gartic.io/"
-          Start-Sleep -Seconds 1
-          Start-Process $firefox -ArgumentList "-new-tab", "https://gartic.io/"
-          Start-Sleep -Seconds 1
-          Start-Process $firefox -ArgumentList "-new-tab", "https://gartic.io/"
-          Start-Sleep -Seconds 1
-          Start-Process $firefox -ArgumentList "-new-tab", "https://gartic.io/"
-          Start-Sleep -Seconds 1
-          Start-Process $firefox -ArgumentList "-new-tab", "https://gartic.io/"
-          Start-Sleep -Seconds 1
-          Start-Process $firefox -ArgumentList "-new-tab", "https://gartic.io/"
-
-          Write-Host "Firefox launched with userscript + 6 gartic tabs!"
-          Write-Host "RDP Ready!"
-
-          while ($true) { Start-Sleep -Seconds 300 }
+          echo "::notice title=RDP INFO::IP: $ip | User: saif1234 | Pass: 12345678"
+          while ($true) { Start-Sleep 3000 }
